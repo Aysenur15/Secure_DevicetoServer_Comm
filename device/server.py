@@ -1,10 +1,13 @@
 # server/server.py
 import socket
 import os
+import json
+import base64
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+import secrets
 
 # Generate a server RSA key pair if it doesn't exist
 def generate_server_key_pair():
@@ -65,11 +68,19 @@ def server_main():
     generate_server_key_pair()
     generate_server_csr()
 
-    #basic socket communication setup
+    # upload server certificate
+    with open("server_cert.pem", "r") as f:
+        server_cert = f.read()
+    # upload CA sertificate
+    with open("ca_certificate.pem", "rb") as f:
+        ca_cert = x509.load_pem_x509_certificate(f.read())
+
+    # Create random nonce
+    server_nonce = secrets.token_bytes(16)
+    server_nonce_b64 = base64.b64encode(server_nonce).decode()
+
     host = 'localhost'
     port = 12345
-
-    # Set up server socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
@@ -78,13 +89,30 @@ def server_main():
         with conn:
             print(f"[Server] Connected by {addr}")
 
-            # Receive Hello from device
-            data = conn.recv(1024).decode()
-            print(f"[Server] Received: {data}")
+            # 1. Take the Hello message from the device
+            data = conn.recv(4096).decode()
+            hello = json.loads(data)
 
-            # Send Hello back
-            hello_msg = "Hello from Server"
-            conn.sendall(hello_msg.encode())
+            # 2.
+            device_cert = x509.load_pem_x509_certificate(hello["cert"].encode())
+            if device_cert.issuer != ca_cert.subject:
+                print("[Server] Certificate issuer is not valid.")
+                conn.close()
+                return
+            print("[Server] Device certificate verificated.")
+
+            # 3. Take Nonce
+            device_nonce = base64.b64decode(hello["nonce"])
+            print("[Server] Device nonce:", device_nonce.hex())
+
+            # 4. Server sends its own Hello message
+            server_hello = {
+                "type": "hello",
+                "cert": server_cert,
+                "nonce": server_nonce_b64
+            }
+            conn.sendall(json.dumps(server_hello).encode())
+            print("[Server] Hello message send.")
 
 if __name__ == "__main__":
     server_main()
