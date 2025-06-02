@@ -3,8 +3,12 @@ import socket
 import os
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+import base64
+import json
+
 
 # Generate a server RSA key pair if it doesn't exist
 def generate_server_key_pair():
@@ -60,16 +64,49 @@ def generate_server_csr():
 
     print("[Server] CSR generated and saved.")
 
+def create_hello_message(cert_path):
+    with open(cert_path, "rb") as f:
+        cert_pem = f.read()
+
+    nonce = os.urandom(32)
+    hello_msg = {
+        "type": "hello",
+        "certificate": base64.b64encode(cert_pem).decode(),
+        "nonce": base64.b64encode(nonce).decode()
+    }
+    return hello_msg, nonce
+
+
+def verify_certificate(cert: x509.Certificate, ca_cert_path: str):
+    # Load CA certificate
+    with open(ca_cert_path, "rb") as f:
+        ca_cert = x509.load_pem_x509_certificate(f.read())
+
+    # Get CA's public key
+    ca_public_key = ca_cert.public_key()
+
+    # Verify that the certificate was signed by the CA
+    try:
+        ca_public_key.verify(
+            cert.signature,
+            cert.tbs_certificate_bytes,
+            padding.PKCS1v15(),  # RSA padding
+            cert.signature_hash_algorithm
+        )
+        print("[✓] Certificate is valid and signed by the CA.")
+        return True
+    except Exception as e:
+        print("[✗] Certificate verification failed:", e)
+        return False
+
 ## Main function to run the server
 def server_main():
     generate_server_key_pair()
     generate_server_csr()
 
-    #basic socket communication setup
     host = 'localhost'
     port = 12345
 
-    # Set up server socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
@@ -78,13 +115,30 @@ def server_main():
         with conn:
             print(f"[Server] Connected by {addr}")
 
-            # Receive Hello from device
-            data = conn.recv(1024).decode()
-            print(f"[Server] Received: {data}")
+            # Step 1: Receive Hello from device
+            device_hello_raw = conn.recv(4096).decode()
 
-            # Send Hello back
-            hello_msg = "Hello from Server"
-            conn.sendall(hello_msg.encode())
+            if not device_hello_raw.strip():  # Handle empty input safely
+                raise ValueError("Received empty message from client")
+
+            device_hello = json.loads(device_hello_raw)
+
+            if device_hello.get("type") != "hello":
+                raise ValueError("Unexpected message type from client!")
+
+            device_cert = x509.load_pem_x509_certificate(
+                base64.b64decode(device_hello["certificate"])
+            )
+            device_nonce = base64.b64decode(device_hello["nonce"])
+            print("[Server] Received device certificate and nonce.")
+
+            # Step 2: Send Hello back
+            hello_data, my_nonce = create_hello_message("server_cert.pem")
+            conn.sendall(json.dumps(hello_data).encode())
+
+            device_cert = x509.load_pem_x509_certificate(base64.b64decode(device_hello["certificate"]))
+            if not verify_certificate(device_cert, "../ca/ca_certificate.pem"):
+                raise ValueError("Device certificate verification failed!")
 
 if __name__ == "__main__":
     server_main()
