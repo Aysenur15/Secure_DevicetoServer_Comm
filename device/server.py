@@ -11,6 +11,9 @@ import json
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
+from crypto_utils import encrypt_and_mac, decrypt_and_verify
+import time
+
 
 # Generate a server RSA key pair if it doesn't exist
 def generate_server_key_pair():
@@ -128,7 +131,7 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     # Calculate shared secret
     shared_secret = private_key.exchange(ec.ECDH(), peer_public_key)
     # Derive session keys and IV
-    info_prefix = local_nonce + remote_nonce
+    info_prefix = remote_nonce + local_nonce
     def hkdf(info, length):
         return HKDF(algorithm=hashes.SHA256(), length=length, salt=None, info=info+info_prefix).derive(shared_secret)
     k1 = hkdf(b"key_device_to_server", 32)
@@ -185,6 +188,23 @@ def server_main():
             print("[Server] Server→Device key:", k2.hex())
             print("[Server] MAC keys:", mac1.hex(), mac2.hex())
             print("[Server] IV:", iv.hex())
+
+
+            # Receive encrypted message from device
+            ciphertext = conn.recv(4096)
+            plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[Server] Received from device: {plaintext} at {timestamp}")
+
+            with open("server_log.txt", "a") as f:
+                f.write(f"[{timestamp}] {plaintext}\n")
+
+            # Send encrypted reply
+            response_msg = f"ACK: Received '{plaintext}'"
+            cipher_response = encrypt_and_mac(response_msg, k2, mac2, iv)
+            conn.sendall(cipher_response)
+            print("[Server] Encrypted reply sent.")
+
 
 if __name__ == "__main__":
     server_main()

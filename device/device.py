@@ -10,8 +10,9 @@ from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
-import base64
-import json
+from crypto_utils import encrypt_and_mac, decrypt_and_verify
+import time
+
 
 # Generate RSA key pair
 def generate_device_key_pair():
@@ -167,6 +168,22 @@ def device_main():
         print("[Device] Server→Device key:", k2.hex())
         print("[Device] MAC keys:", mac1.hex(), mac2.hex())
         print("[Device] IV:", iv.hex())
+
+
+        # Send encrypted message to server
+        plaintext_msg = "Hello from Device (one-time encrypted)"
+        ciphertext = encrypt_and_mac(plaintext_msg, k1, mac1, iv)
+        s.sendall(ciphertext)
+        print("[Device] Encrypted message sent.")
+
+        # Receive encrypted ACK from server
+        cipher_reply = s.recv(4096)
+        decrypted_reply = decrypt_and_verify(cipher_reply, k2, mac2, iv)
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[Device] Received from server: {decrypted_reply} at {timestamp}")
+
+        with open("device_log.txt", "a") as f:
+            f.write(f"[{timestamp}] {decrypted_reply}\n")
 
 
 if __name__ == "__main__":
