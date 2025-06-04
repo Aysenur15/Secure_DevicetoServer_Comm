@@ -3,7 +3,7 @@ import os
 import base64
 import json
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -133,6 +133,18 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     iv = hkdf(b"iv", 16)
     return k1, k2, mac1, mac2, iv
 
+# Sign an image using the device's private key
+def sign_image(image_path, private_key):
+    with open(image_path, "rb") as img_file:
+        image_data = img_file.read()
+    signature = private_key.sign(
+        image_data,
+        padding.PKCS1v15(),
+        hashes.SHA256()
+    )
+    return image_data, signature
+
+
 ## Main function to run the device
 def device_main():
     generate_device_key_pair()
@@ -155,7 +167,7 @@ def device_main():
         if server_hello.get("type") != "hello":
             raise ValueError("Unexpected message type from server!")
 
-        server_cert = x509.load_pem_x509_certificate(base64.b64decode(server_hello["certificate"]))
+        #server_cert = x509.load_pem_x509_certificate(base64.b64decode(server_hello["certificate"]))
         server_nonce = base64.b64decode(server_hello["nonce"])
 
         print("[Device] Received server certificate and nonce.")
@@ -184,6 +196,37 @@ def device_main():
 
         with open("device_log.txt", "a") as f:
             f.write(f"[{timestamp}] {decrypted_reply}\n")
+
+        # path for image
+        image_path = "../img/sample_image.jpeg"
+        # path for video
+        #image_path = "../img/sample_video.mp4"
+
+        with open("device_private_key.pem", "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
+
+        # sign an image
+        image_data, signature = sign_image(image_path, private_key)
+
+        payload = {
+            "type": "image",
+            "image": base64.b64encode(image_data).decode(),
+            "signature": base64.b64encode(signature).decode()
+        }
+        print( "[Device] Sending signed image payload to server...")
+        payload_bytes = json.dumps(payload).encode()
+        # print(  "payload_bytes length:", len(payload_bytes))
+        # Encrypt the payload
+        encrypted_payload = encrypt_and_mac(payload_bytes, k1, mac1, iv)
+
+
+        # Encrypted payload is sent in two parts first the length, then the actual data
+        length = len(encrypted_payload)
+        print(  "[Device] Sending encrypted image payload of length:", length)
+        s.sendall(str(length).zfill(10).encode())  # 10 characters for length of header
+        s.sendall(encrypted_payload)
+
+        print(  "[Device] Encrypted image payload sent to server.")
 
 
 if __name__ == "__main__":

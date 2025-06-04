@@ -1,0 +1,12 @@
+[2025-06-04 15:08:52] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:30:39] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:31:34] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:32:17] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:33:09] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:36:09] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:40:29] ACK: Received 'Hello from Device (one-time encrypted)'
+[2025-06-04 15:53:49] b"ACK: Received 'Hello from Device (one-time encrypted)'"
+[2025-06-04 16:14:14] b"ACK: Received 'Hello from Device (one-time encrypted)'"
+[2025-06-04 16:26:26] b"ACK: Received 'Hello from Device (one-time encrypted)'"
+[2025-06-04 16:28:11] b"ACK: Received 'Hello from Device (one-time encrypted)'"
+[2025-06-04 16:31:42] b"ACK: Received 'Hello from Device (one-time encrypted)'"

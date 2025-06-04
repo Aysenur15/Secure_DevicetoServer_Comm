@@ -17,7 +17,12 @@ def encrypt_and_mac(message: str, key: bytes, mac_key: bytes, iv: bytes) -> byte
     Returns:
         Encrypted message as bytes.
     """
-    msg_bytes = message.encode()
+    # Convert message to bytes if it's a string
+    if isinstance(message, str):
+        msg_bytes = message.encode()
+    else:
+        msg_bytes = message
+
     mac = hmac.new(mac_key, msg_bytes, hashlib.sha256).digest()
     payload = msg_bytes + mac
     cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -46,4 +51,4 @@ def decrypt_and_verify(ciphertext: bytes, key: bytes, mac_key: bytes, iv: bytes)
     expected_mac = hmac.new(mac_key, msg, hashlib.sha256).digest()
     if not hmac.compare_digest(received_mac, expected_mac):
         raise ValueError("MAC verification failed!")
-    return msg.decode()
+    return msg # changed back to bytes for consistency

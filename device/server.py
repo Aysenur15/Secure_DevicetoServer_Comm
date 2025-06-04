@@ -2,7 +2,7 @@
 import socket
 import os
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -141,6 +141,17 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     iv = hkdf(b"iv", 16)
     return k1, k2, mac1, mac2, iv
 
+# Function to receive all data from a socket until the specified number of bytes is received
+def recv_all(sock, n):
+    data = b''
+    while len(data) < n:
+        packet = sock.recv(n - len(data))
+        if not packet:
+            break
+        data += packet
+    return data
+
+
 ## Main function to run the server
 def server_main():
     generate_server_key_pair()
@@ -157,7 +168,7 @@ def server_main():
         with conn:
             print(f"[Server] Connected by {addr}")
 
-            # Step 1: Receive Hello from device
+            # Receive Hello from device
             device_hello_raw = conn.recv(4096).decode()
 
             if not device_hello_raw.strip():  # Handle empty input safely
@@ -168,13 +179,11 @@ def server_main():
             if device_hello.get("type") != "hello":
                 raise ValueError("Unexpected message type from client!")
 
-            device_cert = x509.load_pem_x509_certificate(
-                base64.b64decode(device_hello["certificate"])
-            )
+            #device_cert = x509.load_pem_x509_certificate(                base64.b64decode(device_hello["certificate"])            )
             device_nonce = base64.b64decode(device_hello["nonce"])
             print("[Server] Received device certificate and nonce.")
 
-            # Step 2: Send Hello back
+            # Send Hello back
             hello_data, my_nonce = create_hello_message("server_cert.pem")
             conn.sendall(json.dumps(hello_data).encode())
 
@@ -182,7 +191,7 @@ def server_main():
             if not verify_certificate(device_cert, "../ca/ca_certificate.pem"):
                 raise ValueError("Device certificate verification failed!")
 
-            # Step 3: ECDH key agreement
+            # ECDH key agreement
             k1, k2, mac1, mac2, iv = ecdh_key_agreement(conn, is_server=True, local_nonce=my_nonce, remote_nonce=device_nonce)
             print("[Server] Device→Server key:", k1.hex())
             print("[Server] Server→Device key:", k2.hex())
@@ -192,7 +201,7 @@ def server_main():
 
             # Receive encrypted message from device
             ciphertext = conn.recv(4096)
-            plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv)
+            plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv).decode()
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             print(f"[Server] Received from device: {plaintext} at {timestamp}")
 
@@ -204,6 +213,37 @@ def server_main():
             cipher_response = encrypt_and_mac(response_msg, k2, mac2, iv)
             conn.sendall(cipher_response)
             print("[Server] Encrypted reply sent.")
+
+            # Receive the header to know how much data to expect
+            header = conn.recv(10)
+            length = int(header.decode())
+            print("Payload length to receive:", length)
+
+            # Receive the actual encrypted image data
+            cipherimage = recv_all(conn, length)
+            print("Actual received:", len(cipherimage))
+
+            # Take encrypted data fully and decrypt it
+            payload_bytes = decrypt_and_verify(cipherimage, k1, mac1, iv)
+            payload = json.loads(payload_bytes)
+
+            if payload["type"] == "image":
+                image_data = base64.b64decode(payload["image"])
+                signature = base64.b64decode(payload["signature"])
+                # Verify the signature
+                device_public_key = device_cert.public_key()
+                try:
+                    device_public_key.verify(
+                        signature,
+                        image_data,
+                        padding.PKCS1v15(),
+                        hashes.SHA256()
+                    )
+                    print("[Server] ✓ Signature is valid. Image received successfully.")
+                    with open("received_from_device.png", "wb") as f:
+                        f.write(image_data)
+                except Exception as e:
+                    print("[Server] ✗ Signature is not valid:", e)
 
 
 if __name__ == "__main__":
