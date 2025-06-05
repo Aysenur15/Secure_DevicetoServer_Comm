@@ -139,7 +139,8 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     mac1 = hkdf(b"mac_device", 32)
     mac2 = hkdf(b"mac_server", 32)
     iv = hkdf(b"iv", 16)
-    return k1, k2, mac1, mac2, iv
+    return k1, k2, mac1, mac2, iv,shared_secret,info_prefix
+
 
 # Function to receive all data from a socket until the specified number of bytes is received
 def recv_all(sock, n):
@@ -152,6 +153,35 @@ def recv_all(sock, n):
     return data
 
 
+def check_and_update_keys(shared_secret, info_prefix, message_count, update_counter):
+    if message_count % 2 == 0:  # Update keys every 2 messages
+        update_counter += 1
+
+        def hkdf(info, length):
+            return HKDF(
+                algorithm=hashes.SHA256(),
+                length=length,
+                salt=None,
+                info=info_prefix + info + update_counter.to_bytes(2, 'big')
+            ).derive(shared_secret)
+
+        k1 = hkdf(b"key_device_to_server", 32)
+        k2 = hkdf(b"key_server_to_device", 32)
+        mac1 = hkdf(b"mac_device", 32)
+        mac2 = hkdf(b"mac_server", 32)
+        iv = hkdf(b"iv", 16)
+
+        print(f"[Key Update] Applied update #{update_counter}")
+        print("New k1:", k1.hex())
+        print("New k2:", k2.hex())
+        print("New mac1:", mac1.hex())
+        print("New mac2:", mac2.hex())
+        print("New iv:", iv.hex())
+
+        return (k1, k2, mac1, mac2, iv), update_counter
+    else:
+        return None, update_counter
+
 ## Main function to run the server
 def server_main():
     generate_server_key_pair()
@@ -160,7 +190,6 @@ def server_main():
     host = 'localhost'
     port = 12345
 
-    # Create a TCP/IP socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
@@ -169,22 +198,16 @@ def server_main():
         with conn:
             print(f"[Server] Connected by {addr}")
 
-            # Receive Hello from device
             device_hello_raw = conn.recv(4096).decode()
-
-            if not device_hello_raw.strip():  # Handle empty input safely
+            if not device_hello_raw.strip():
                 raise ValueError("Received empty message from client")
-
             device_hello = json.loads(device_hello_raw)
-
             if device_hello.get("type") != "hello":
                 raise ValueError("Unexpected message type from client!")
 
-            #device_cert = x509.load_pem_x509_certificate(                base64.b64decode(device_hello["certificate"])            )
             device_nonce = base64.b64decode(device_hello["nonce"])
             print("[Server] Received device certificate and nonce.")
 
-            # Send Hello back
             hello_data, my_nonce = create_hello_message("server_cert.pem")
             conn.sendall(json.dumps(hello_data).encode())
 
@@ -192,56 +215,69 @@ def server_main():
             if not verify_certificate(device_cert, "../ca/ca_certificate.pem"):
                 raise ValueError("Device certificate verification failed!")
 
-            # ECDH key agreement
-            k1, k2, mac1, mac2, iv = ecdh_key_agreement(conn, is_server=True, local_nonce=my_nonce, remote_nonce=device_nonce)
+            k1, k2, mac1, mac2, iv, shared_secret, info_prefix = ecdh_key_agreement(
+                conn, is_server=True, local_nonce=my_nonce, remote_nonce=device_nonce
+            )
+            message_count = 0
+            update_counter = 0
+
             print("[Server] Device→Server key:", k1.hex())
             print("[Server] Server→Device key:", k2.hex())
             print("[Server] MAC keys:", mac1.hex(), mac2.hex())
             print("[Server] IV:", iv.hex())
 
-
-            # Receive encrypted message from device
             ciphertext = conn.recv(4096)
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Received ciphertext (text): {ciphertext.hex()}\n")
 
             plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv).decode()
-
             print(f"[Server] Received from device: {plaintext} at {timestamp}")
+            message_count += 1
+            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
+                                                                 update_counter)
+            if updated_keys:
+                k1, k2, mac1, mac2, iv = updated_keys
+                with open("server_log.txt", "a") as f:
+                    f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
-            with open("server_log.txt", "a") as f:
-                f.write(f"[{timestamp}] {plaintext}\n")
-
-            # Send encrypted reply
             response_msg = f"ACK: Received '{plaintext}'"
             cipher_response = encrypt_and_mac(response_msg, k2, mac2, iv)
             conn.sendall(cipher_response)
             print("[Server] Encrypted reply sent.")
-            # Log sent ciphertext
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Sent ciphertext (ACK): {cipher_response.hex()}\n")
 
-            # Receive the header to know how much data to expect
+            message_count += 1
+            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
+                                                                 update_counter)
+            if updated_keys:
+                k1, k2, mac1, mac2, iv = updated_keys
+                with open("server_log.txt", "a") as f:
+                    f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
+
             header = conn.recv(10)
             length = int(header.decode())
             print("Payload length to receive:", length)
 
-            # Receive the actual encrypted image data
             cipherimage = recv_all(conn, length)
             print("Actual received:", len(cipherimage))
-            #Log the received length
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Received encrypted image payload of length: {length} bytes\n")
 
-            # Take encrypted data fully and decrypt it
             payload_bytes = decrypt_and_verify(cipherimage, k1, mac1, iv)
             payload = json.loads(payload_bytes)
+            message_count += 1
+            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
+                                                                 update_counter)
+            if updated_keys:
+                k1, k2, mac1, mac2, iv = updated_keys
+                with open("server_log.txt", "a") as f:
+                    f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
             if payload["type"] == "image":
                 image_data = base64.b64decode(payload["image"])
                 signature = base64.b64decode(payload["signature"])
-                # Verify the signature
                 device_public_key = device_cert.public_key()
                 try:
                     device_public_key.verify(
@@ -253,9 +289,16 @@ def server_main():
                     print("[Server] ✓ Signature is valid. Image received successfully.")
                     with open("received_from_device.png", "wb") as f:
                         f.write(image_data)
-                    # Log the successful image reception
                     with open("server_log.txt", "a") as f:
                         f.write(f"[{timestamp}] Image verified and saved as 'received_from_device.png'.\n")
+
+                    message_count += 1
+                    updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
+                                                                         update_counter)
+                    if updated_keys:
+                        k1, k2, mac1, mac2, iv = updated_keys
+                        with open("server_log.txt", "a") as f:
+                            f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
                 except Exception as e:
                     print("[Server] ✗ Signature is not valid:", e)

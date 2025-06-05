@@ -132,7 +132,7 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     mac1 = hkdf(b"mac_device", 32)
     mac2 = hkdf(b"mac_server", 32)
     iv = hkdf(b"iv", 16)
-    return k1, k2, mac1, mac2, iv
+    return k1, k2, mac1, mac2, iv,shared_secret,info_prefix
 
 # Sign an image using the device's private key
 def sign_image(image_path, private_key):
@@ -145,6 +145,33 @@ def sign_image(image_path, private_key):
     )
     return image_data, signature
 
+def check_and_update_keys(shared_secret, info_prefix, message_count, update_counter):
+    if message_count % 2 == 0:  # Update keys every 2 messages
+        update_counter += 1
+        def hkdf(info, length):
+            return HKDF(
+                algorithm=hashes.SHA256(),
+                length=length,
+                salt=None,
+                info=info_prefix + info + update_counter.to_bytes(2, 'big')
+            ).derive(shared_secret)
+
+        k1 = hkdf(b"key_device_to_server", 32)
+        k2 = hkdf(b"key_server_to_device", 32)
+        mac1 = hkdf(b"mac_device", 32)
+        mac2 = hkdf(b"mac_server", 32)
+        iv = hkdf(b"iv", 16)
+
+        print(f"[Key Update] Applied update #{update_counter}")
+        print("New k1:", k1.hex())
+        print("New k2:", k2.hex())
+        print("New mac1:", mac1.hex())
+        print("New mac2:", mac2.hex())
+        print("New iv:", iv.hex())
+
+        return (k1, k2, mac1, mac2, iv), update_counter
+    else:
+        return None, update_counter
 
 ## Main function to run the device
 def device_main():
@@ -165,52 +192,59 @@ def device_main():
         # Step 2: Receive Hello from server
         response = s.recv(4096).decode()
         server_hello = json.loads(response)
-
         if server_hello.get("type") != "hello":
             raise ValueError("Unexpected message type from server!")
 
-        #server_cert = x509.load_pem_x509_certificate(base64.b64decode(server_hello["certificate"]))
         server_nonce = base64.b64decode(server_hello["nonce"])
-
         print("[Device] Received server certificate and nonce.")
         server_cert = x509.load_pem_x509_certificate(base64.b64decode(server_hello["certificate"]))
         if not verify_certificate(server_cert, "../ca/ca_certificate.pem"):
             raise ValueError("Server certificate verification failed!")
 
-        k1, k2, mac1, mac2, iv = ecdh_key_agreement(s, is_server=False, local_nonce=my_nonce, remote_nonce=server_nonce)
+        # Step 3: ECDH Key Agreement + Initialize Counters
+        k1, k2, mac1, mac2, iv, shared_secret, info_prefix = ecdh_key_agreement(
+            s, is_server=False, local_nonce=my_nonce, remote_nonce=server_nonce
+        )
+        message_count = 0
+        update_counter = 0
+
         print("[Device] Device→Server key:", k1.hex())
         print("[Device] Server→Device key:", k2.hex())
         print("[Device] MAC keys:", mac1.hex(), mac2.hex())
         print("[Device] IV:", iv.hex())
 
-
-        # Send encrypted message to server
+        # Step 4: Send Encrypted Text Message
         plaintext_msg = "Hello from Device (one-time encrypted)"
         ciphertext = encrypt_and_mac(plaintext_msg, k1, mac1, iv)
         s.sendall(ciphertext)
         print("[Device] Encrypted message sent.")
-
-        # Log sent ciphertext
         with open("device_log.txt", "a") as f:
             f.write(f"[{timestamp}] Sent ciphertext (text): {ciphertext.hex()}\n")
-
-        # Receive encrypted ACK from server
+        message_count += 1
+        updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count, update_counter)
+        if updated_keys:
+            k1, k2, mac1, mac2, iv = updated_keys
+            with open("device_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
+        # Step 5: Receive Encrypted ACK
         cipher_reply = s.recv(4096)
         decrypted_reply = decrypt_and_verify(cipher_reply, k2, mac2, iv)
         print(f"[Device] Received from server: {decrypted_reply} at {timestamp}")
-
         with open("device_log.txt", "a") as f:
             f.write(f"[{timestamp}] Received ciphertext (ACK): {cipher_reply.hex()}\n")
+        message_count += 1
+        updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count, update_counter)
+        if updated_keys:
+            k1, k2, mac1, mac2, iv = updated_keys
+            with open("device_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
-        # path for image
-        #image_path = "../img/sample_image.jpeg"
-        # path for video
-        image_path = "../img/sample_video.mp4"
+        # Step 6: Sign and Send Image (or video)
+        image_path = "../img/sample_video.mp4"  # or use a JPEG
 
         with open("device_private_key.pem", "rb") as f:
             private_key = serialization.load_pem_private_key(f.read(), password=None)
 
-        # sign an image
         image_data, signature = sign_image(image_path, private_key)
 
         payload = {
@@ -218,24 +252,24 @@ def device_main():
             "image": base64.b64encode(image_data).decode(),
             "signature": base64.b64encode(signature).decode()
         }
-        print( "[Device] Sending signed image payload to server...")
+        print("[Device] Sending signed image payload to server...")
         payload_bytes = json.dumps(payload).encode()
-        # print(  "payload_bytes length:", len(payload_bytes))
-        # Encrypt the payload
         encrypted_payload = encrypt_and_mac(payload_bytes, k1, mac1, iv)
 
-
-        # Encrypted payload is sent in two parts first the length, then the actual data
+        # Send in two steps: header and data
         length = len(encrypted_payload)
-        print(  "[Device] Sending encrypted image payload of length:", length)
-        s.sendall(str(length).zfill(10).encode())  # 10 characters for length of header
+        print("[Device] Sending encrypted image payload of length:", length)
+        s.sendall(str(length).zfill(10).encode())
         s.sendall(encrypted_payload)
-
-        print(  "[Device] Encrypted image payload sent to server.")
-
-        # Log image transfer
+        print("[Device] Encrypted image payload sent to server.")
         with open("device_log.txt", "a") as f:
             f.write(f"[{timestamp}] Encrypted image payload of {length} bytes sent.\n")
+        message_count += 1
+        updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count, update_counter)
+        if updated_keys:
+            k1, k2, mac1, mac2, iv = updated_keys
+            with open("device_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
 
 if __name__ == "__main__":
