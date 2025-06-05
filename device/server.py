@@ -160,6 +160,7 @@ def server_main():
     host = 'localhost'
     port = 12345
 
+    # Create a TCP/IP socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((host, port))
         s.listen()
@@ -201,8 +202,12 @@ def server_main():
 
             # Receive encrypted message from device
             ciphertext = conn.recv(4096)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            with open("server_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Received ciphertext (text): {ciphertext.hex()}\n")
+
             plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv).decode()
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
             print(f"[Server] Received from device: {plaintext} at {timestamp}")
 
             with open("server_log.txt", "a") as f:
@@ -213,6 +218,9 @@ def server_main():
             cipher_response = encrypt_and_mac(response_msg, k2, mac2, iv)
             conn.sendall(cipher_response)
             print("[Server] Encrypted reply sent.")
+            # Log sent ciphertext
+            with open("server_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Sent ciphertext (ACK): {cipher_response.hex()}\n")
 
             # Receive the header to know how much data to expect
             header = conn.recv(10)
@@ -222,6 +230,9 @@ def server_main():
             # Receive the actual encrypted image data
             cipherimage = recv_all(conn, length)
             print("Actual received:", len(cipherimage))
+            #Log the received length
+            with open("server_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Received encrypted image payload of length: {length} bytes\n")
 
             # Take encrypted data fully and decrypt it
             payload_bytes = decrypt_and_verify(cipherimage, k1, mac1, iv)
@@ -242,6 +253,10 @@ def server_main():
                     print("[Server] ✓ Signature is valid. Image received successfully.")
                     with open("received_from_device.png", "wb") as f:
                         f.write(image_data)
+                    # Log the successful image reception
+                    with open("server_log.txt", "a") as f:
+                        f.write(f"[{timestamp}] Image verified and saved as 'received_from_device.png'.\n")
+
                 except Exception as e:
                     print("[Server] ✗ Signature is not valid:", e)
 

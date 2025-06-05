@@ -10,3 +10,9 @@
 [2025-06-04 16:26:26] b"ACK: Received 'Hello from Device (one-time encrypted)'"
 [2025-06-04 16:28:11] b"ACK: Received 'Hello from Device (one-time encrypted)'"
 [2025-06-04 16:31:42] b"ACK: Received 'Hello from Device (one-time encrypted)'"
+[2025-06-05 15:45:17] Sent ciphertext (text): cd25b8c2f679fc3de12a6a342f3652c32fb6c34a2ad389c8b65c41a193e823ab18cf6fbf483693248df518b538f4d9f5443d41c72c425d27e1d72f75a1cc3f273cf7a6536f6f718c70e40b4bf814cdb8
+[2025-06-05 15:45:17] Received ciphertext (ACK): 3c95f24b19561c14e8d0858c4c4e05ce200f8d5db3adf70da0836ca06635ef7a09eade684550290e715e3266b0a9ab4fb647b14c10b8487261981d5faf783ea5fd6db6d01b86dfaf8209cd252a1b46b3d3d8a65d18ec51af1d0f20330139ee78
+[2025-06-05 15:45:17] Encrypted image payload of 1321424 bytes sent.
+[2025-06-05 15:54:26] Sent ciphertext (text): 8059650ce279033d1aeda9e06e8af9e1af5f5a12dc18acc7cf69057fa60c2b6a768fac5215a0980e4bdbe9c7d2ddce28f8577b89f416d7fbdf90be4c646112d3ec44911ec9fb55344b2d1c09d555ad12
+[2025-06-05 15:54:26] Received ciphertext (ACK): bac74edbb8344c50b7bfe872321e5ea3e36a819bac37e241dbeff173f23dceed32043143c29ba9389fb98996e70e73df6b927a9ecc69f284f9fa76816d884e73d8d86248caf15c0a2e6afaeacee7b6011c978bc713f145e1add46d3b9b18767d
+[2025-06-05 15:54:26] Encrypted image payload of 33732032 bytes sent.

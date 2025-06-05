@@ -73,7 +73,7 @@ def create_hello_message(cert_path):
     }
     return hello_msg, nonce
 
-
+# Verify the server's certificate against the CA's certificate
 def verify_certificate(cert: x509.Certificate, ca_cert_path: str):
     # Load CA certificate
     with open(ca_cert_path, "rb") as f:
@@ -96,6 +96,7 @@ def verify_certificate(cert: x509.Certificate, ca_cert_path: str):
         print("[✗] Certificate verification failed:", e)
         return False
 
+# Perform ECDH key agreement and derive session keys
 def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     # ECDH key pair generation
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -152,6 +153,7 @@ def device_main():
     host = 'localhost'
     port = 12345
 
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((host, port))
         print("[Device] Connected to server.")
@@ -188,19 +190,22 @@ def device_main():
         s.sendall(ciphertext)
         print("[Device] Encrypted message sent.")
 
+        # Log sent ciphertext
+        with open("device_log.txt", "a") as f:
+            f.write(f"[{timestamp}] Sent ciphertext (text): {ciphertext.hex()}\n")
+
         # Receive encrypted ACK from server
         cipher_reply = s.recv(4096)
         decrypted_reply = decrypt_and_verify(cipher_reply, k2, mac2, iv)
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         print(f"[Device] Received from server: {decrypted_reply} at {timestamp}")
 
         with open("device_log.txt", "a") as f:
-            f.write(f"[{timestamp}] {decrypted_reply}\n")
+            f.write(f"[{timestamp}] Received ciphertext (ACK): {cipher_reply.hex()}\n")
 
         # path for image
-        image_path = "../img/sample_image.jpeg"
+        #image_path = "../img/sample_image.jpeg"
         # path for video
-        #image_path = "../img/sample_video.mp4"
+        image_path = "../img/sample_video.mp4"
 
         with open("device_private_key.pem", "rb") as f:
             private_key = serialization.load_pem_private_key(f.read(), password=None)
@@ -227,6 +232,10 @@ def device_main():
         s.sendall(encrypted_payload)
 
         print(  "[Device] Encrypted image payload sent to server.")
+
+        # Log image transfer
+        with open("device_log.txt", "a") as f:
+            f.write(f"[{timestamp}] Encrypted image payload of {length} bytes sent.\n")
 
 
 if __name__ == "__main__":
