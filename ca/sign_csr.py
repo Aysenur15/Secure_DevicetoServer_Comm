@@ -36,7 +36,7 @@ def sign_csr(csr_path, cert_path, ca_key_path, ca_cert_path):
 
     print(f"Certificate created: {cert_path}")
 
-# Sign CSRs for device and server
-sign_csr("../device/device_csr.pem", "../device/device_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
-sign_csr("../device/server_csr.pem", "../device/server_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
+# Sign CSRs for device_server and server
+sign_csr("../device_server/device_csr.pem", "../device_server/device_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
+sign_csr("../device_server/server_csr.pem", "../device_server/server_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
 

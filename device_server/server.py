@@ -16,7 +16,7 @@ import time
 
 
 # Generate a server RSA key pair if it doesn't exist
-def generate_server_key_pair():
+def generate_server_rsa_key_pair():
     private_key_path = "server_private_key.pem"
     public_key_path = "server_public_key.pem"
     # Check if keys already exist
@@ -46,7 +46,7 @@ def generate_server_key_pair():
     print("[Server] Key pair generated and saved.")
 
 # Generate a server CSR for the server
-def generate_server_csr():
+def create_server_csr():
     csr_path = "server_csr.pem"
     private_key_path = "server_private_key.pem"
     # Check if CSR already exists
@@ -69,7 +69,7 @@ def generate_server_csr():
 
     print("[Server] CSR generated and saved.")
 
-def create_hello_message(cert_path):
+def hello_message(cert_path):
     with open(cert_path, "rb") as f:
         cert_pem = f.read()
 
@@ -82,7 +82,7 @@ def create_hello_message(cert_path):
     return hello_msg, nonce
 
 
-def verify_certificate(cert: x509.Certificate, ca_cert_path: str):
+def verify_device_certificate(cert: x509.Certificate, ca_cert_path: str):
     # Load CA certificate
     with open(ca_cert_path, "rb") as f:
         ca_cert = x509.load_pem_x509_certificate(f.read())
@@ -143,7 +143,7 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
 
 
 # Function to receive all data from a socket until the specified number of bytes is received
-def recv_all(sock, n):
+def receive_all_data(sock, n):
     data = b''
     while len(data) < n:
         packet = sock.recv(n - len(data))
@@ -184,8 +184,8 @@ def check_and_update_keys(shared_secret, info_prefix, message_count, update_coun
 
 ## Main function to run the server
 def server_main():
-    generate_server_key_pair()
-    generate_server_csr()
+    generate_server_rsa_key_pair()
+    create_server_csr()
 
     host = 'localhost'
     port = 12345
@@ -206,13 +206,13 @@ def server_main():
                 raise ValueError("Unexpected message type from client!")
 
             device_nonce = base64.b64decode(device_hello["nonce"])
-            print("[Server] Received device certificate and nonce.")
+            print("[Server] Received device_server certificate and nonce.")
 
-            hello_data, my_nonce = create_hello_message("server_cert.pem")
+            hello_data, my_nonce = hello_message("server_cert.pem")
             conn.sendall(json.dumps(hello_data).encode())
 
             device_cert = x509.load_pem_x509_certificate(base64.b64decode(device_hello["certificate"]))
-            if not verify_certificate(device_cert, "../ca/ca_certificate.pem"):
+            if not verify_device_certificate(device_cert, "../ca/ca_certificate.pem"):
                 raise ValueError("Device certificate verification failed!")
 
             k1, k2, mac1, mac2, iv, shared_secret, info_prefix = ecdh_key_agreement(
@@ -232,7 +232,7 @@ def server_main():
                 f.write(f"[{timestamp}] Received ciphertext (text): {ciphertext.hex()}\n")
 
             plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv).decode()
-            print(f"[Server] Received from device: {plaintext} at {timestamp}")
+            print(f"[Server] Received from device_server: {plaintext} at {timestamp}")
             message_count += 1
             updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
                                                                  update_counter)
@@ -260,7 +260,7 @@ def server_main():
             length = int(header.decode())
             print("Payload length to receive:", length)
 
-            cipherimage = recv_all(conn, length)
+            cipherimage = receive_all_data(conn, length)
             print("Actual received:", len(cipherimage))
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Received encrypted image payload of length: {length} bytes\n")
@@ -302,6 +302,8 @@ def server_main():
 
                 except Exception as e:
                     print("[Server] ✗ Signature is not valid:", e)
+
+
 
 
 if __name__ == "__main__":

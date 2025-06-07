@@ -5,18 +5,6 @@ import hashlib
 
 
 def encrypt_and_mac(message: str, key: bytes, mac_key: bytes, iv: bytes) -> bytes:
-    """
-    Encrypt a message and append HMAC for integrity.
-
-    Args:
-        message: The plaintext message to encrypt.
-        key: AES encryption key.
-        mac_key: HMAC key for integrity.
-        iv: Initialization vector for AES CBC.
-
-    Returns:
-        Encrypted message as bytes.
-    """
     # Convert message to bytes if it's a string
     if isinstance(message, str):
         msg_bytes = message.encode()
@@ -30,21 +18,7 @@ def encrypt_and_mac(message: str, key: bytes, mac_key: bytes, iv: bytes) -> byte
 
 
 def decrypt_and_verify(ciphertext: bytes, key: bytes, mac_key: bytes, iv: bytes) -> str:
-    """
-    Decrypt and verify the MAC of a received message.
 
-    Args:
-        ciphertext: The encrypted message with HMAC.
-        key: AES decryption key.
-        mac_key: HMAC key for integrity check.
-        iv: Initialization vector.
-
-    Returns:
-        Decrypted plaintext message as string if MAC is valid.
-
-    Raises:
-        ValueError: If MAC verification fails.
-    """
     cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
     msg, received_mac = decrypted[:-32], decrypted[-32:]
