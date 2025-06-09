@@ -41,3 +41,9 @@
 [2025-06-07 23:11:53] Received encrypted image payload of length: 33732032 bytes
 [2025-06-07 23:11:53] Image verified and saved as 'received_from_device.png'.
 [2025-06-07 23:11:53] Key update #2 applied.
+[2025-06-09 17:27:39] Received ciphertext (text): ddbf13793deb887fcab789c613b95ecbd6290614b770b61c297afacaa4cd75045a203cbbeb8432ce0c0c330dae0ce4a76203f48f64ba72276d73d460f2dc4ce26642382694893e181340cf5acced4f84
+[2025-06-09 17:27:39] Sent ciphertext (ACK): 3f70d17cd6caecca07b48747e3f87c726ecc67baf91a9cef2645287a68818895ebcc020ca4e6235c8c56dfe33e0b4e6fb91cde054760fa89e7c07e5ebf55f423eb1fa861a049bd617f3d4be896e04e1897140f70d3340adebea39b8ffcd9f9f2
+[2025-06-09 17:27:39] Key update #1 applied.
+[2025-06-09 17:27:39] Received encrypted image payload of length: 33732032 bytes
+[2025-06-09 17:27:39] Image verified and saved as 'received_from_device.png'.
+[2025-06-09 17:27:39] Key update #2 applied.

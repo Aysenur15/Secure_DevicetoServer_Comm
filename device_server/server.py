@@ -1,4 +1,4 @@
-# server/server.py
+# device_server/server.py
 import socket
 import os
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -15,20 +15,20 @@ from crypto_utils import encrypt_and_mac, decrypt_and_verify
 import time
 
 
-# Generate a server RSA key pair if it doesn't exist
+# Generate RSA key pair for the server if it doesn't exist
 def generate_server_rsa_key_pair():
     private_key_path = "server_private_key.pem"
     public_key_path = "server_public_key.pem"
-    # Check if keys already exist
+    #
     if os.path.exists(private_key_path) and os.path.exists(public_key_path):
         print("[Server] Key pair already exists. Skipping generation.")
         return
-    # Generate RSA key pair
+
     print("[Server] Generating RSA key pair...")
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
 
-    # Save private key
+    # Save the private and public keys
     with open(private_key_path, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -36,7 +36,6 @@ def generate_server_rsa_key_pair():
             encryption_algorithm=serialization.NoEncryption()
         ))
 
-    # Save public key
     with open(public_key_path, "wb") as f:
         f.write(public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
@@ -53,7 +52,7 @@ def create_server_csr():
     if os.path.exists(csr_path):
         print("[Server] CSR already exists. Skipping CSR generation.")
         return
-    # Generate CSR
+
     print("[Server] Generating CSR...")
     with open(private_key_path, "rb") as f:
         private_key = serialization.load_pem_private_key(f.read(), password=None)
@@ -69,6 +68,7 @@ def create_server_csr():
 
     print("[Server] CSR generated and saved.")
 
+# Create Hello message with certificate and nonce
 def hello_message(cert_path):
     with open(cert_path, "rb") as f:
         cert_pem = f.read()
@@ -81,7 +81,7 @@ def hello_message(cert_path):
     }
     return hello_msg, nonce
 
-
+# Verify the device's certificate against the CA's certificate
 def verify_device_certificate(cert: x509.Certificate, ca_cert_path: str):
     # Load CA certificate
     with open(ca_cert_path, "rb") as f:
@@ -104,7 +104,7 @@ def verify_device_certificate(cert: x509.Certificate, ca_cert_path: str):
         print("[✗] Certificate verification failed:", e)
         return False
 
-#
+# Perform ECDH key agreement and derive session keys
 def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     # ECDH key pair generation
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -112,7 +112,7 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
         encoding = serialization.Encoding.X962,
         format = serialization.PublicFormat.UncompressedPoint
     )
-    # Public key send/receive protocol:
+    # Send and receive public keys
     if is_server:
         # Server sends first, then receives
         msg = {"type": "ecdh_pubkey", "key": base64.b64encode(public_bytes).decode()}
@@ -128,10 +128,11 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
 
     # Create peer public key object
     peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer_pub_bytes)
-    # Calculate shared secret
     shared_secret = private_key.exchange(ec.ECDH(), peer_public_key)
+
     # Derive session keys and IV
     info_prefix = remote_nonce + local_nonce
+    # Define HKDF function to derive keys
     def hkdf(info, length):
         return HKDF(algorithm=hashes.SHA256(), length=length, salt=None, info=info+info_prefix).derive(shared_secret)
     k1 = hkdf(b"key_device_to_server", 32)
@@ -140,7 +141,6 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     mac2 = hkdf(b"mac_server", 32)
     iv = hkdf(b"iv", 16)
     return k1, k2, mac1, mac2, iv,shared_secret,info_prefix
-
 
 # Function to receive all data from a socket until the specified number of bytes is received
 def receive_all_data(sock, n):
@@ -152,9 +152,9 @@ def receive_all_data(sock, n):
         data += packet
     return data
 
-
+# Check and update keys based on message count
 def check_and_update_keys(shared_secret, info_prefix, message_count, update_counter):
-    if message_count % 2 == 0:  # Update keys every 2 messages
+    if message_count % 2 == 0:  # Update keys in every 2 messages
         update_counter += 1
 
         def hkdf(info, length):
@@ -198,6 +198,7 @@ def server_main():
         with conn:
             print(f"[Server] Connected by {addr}")
 
+            # Receive device hello message
             device_hello_raw = conn.recv(4096).decode()
             if not device_hello_raw.strip():
                 raise ValueError("Received empty message from client")
@@ -205,12 +206,13 @@ def server_main():
             if device_hello.get("type") != "hello":
                 raise ValueError("Unexpected message type from client!")
 
+            # Decode the nonce and certificate
             device_nonce = base64.b64decode(device_hello["nonce"])
             print("[Server] Received device_server certificate and nonce.")
-
+            # Generate server hello message
             hello_data, my_nonce = hello_message("server_cert.pem")
             conn.sendall(json.dumps(hello_data).encode())
-
+            # Load the server's certificate
             device_cert = x509.load_pem_x509_certificate(base64.b64decode(device_hello["certificate"]))
             if not verify_device_certificate(device_cert, "../ca/ca_certificate.pem"):
                 raise ValueError("Device certificate verification failed!")
@@ -231,16 +233,16 @@ def server_main():
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Received ciphertext (text): {ciphertext.hex()}\n")
 
+            # Decrypt and verify the received message
             plaintext = decrypt_and_verify(ciphertext, k1, mac1, iv).decode()
             print(f"[Server] Received from device_server: {plaintext} at {timestamp}")
             message_count += 1
-            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
-                                                                 update_counter)
+            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,update_counter)
             if updated_keys:
                 k1, k2, mac1, mac2, iv = updated_keys
                 with open("server_log.txt", "a") as f:
                     f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
-
+            # Send an ACK response
             response_msg = f"ACK: Received '{plaintext}'"
             cipher_response = encrypt_and_mac(response_msg, k2, mac2, iv)
             conn.sendall(cipher_response)
@@ -248,9 +250,9 @@ def server_main():
             with open("server_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Sent ciphertext (ACK): {cipher_response.hex()}\n")
 
+            # Update message count and check for key updates
             message_count += 1
-            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
-                                                                 update_counter)
+            updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,update_counter)
             if updated_keys:
                 k1, k2, mac1, mac2, iv = updated_keys
                 with open("server_log.txt", "a") as f:
@@ -259,7 +261,7 @@ def server_main():
             header = conn.recv(10)
             length = int(header.decode())
             print("Payload length to receive:", length)
-
+            # Receive the encrypted image payload
             cipherimage = receive_all_data(conn, length)
             print("Actual received:", len(cipherimage))
             with open("server_log.txt", "a") as f:
@@ -302,7 +304,6 @@ def server_main():
 
                 except Exception as e:
                     print("[Server] ✗ Signature is not valid:", e)
-
 
 
 

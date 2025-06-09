@@ -2,6 +2,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
 from datetime import datetime, timedelta
 
+# Function to sign a CSR and create a certificate
 def sign_csr(csr_path, cert_path, ca_key_path, ca_cert_path):
     # Load CA private key
     with open(ca_key_path, "rb") as f:
@@ -36,7 +37,7 @@ def sign_csr(csr_path, cert_path, ca_key_path, ca_cert_path):
 
     print(f"Certificate created: {cert_path}")
 
-# Sign CSRs for device_server and server
+# Sign CSRs for device and server
 sign_csr("../device_server/device_csr.pem", "../device_server/device_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
 sign_csr("../device_server/server_csr.pem", "../device_server/server_cert.pem", "ca_private_key.pem", "ca_certificate.pem")
 

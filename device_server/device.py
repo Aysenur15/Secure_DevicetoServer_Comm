@@ -1,3 +1,4 @@
+#device_server/device.py
 import socket
 import os
 import base64
@@ -14,7 +15,7 @@ from crypto_utils import encrypt_and_mac, decrypt_and_verify
 import time
 
 
-# Generate RSA key pair
+# Generate RSA key pair for the device if it doesn't exist
 def generate_device_rsa_key_pair():
     if os.path.exists("device_private_key.pem") and os.path.exists("device_public_key.pem"):
         print("[Device] Key pair already exists. Skipping generation.")
@@ -24,6 +25,7 @@ def generate_device_rsa_key_pair():
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
 
+    # Save the private and public keys
     with open("device_private_key.pem", "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -60,7 +62,7 @@ def create_device_csr():
 
     print("[Device] CSR generated and saved.")
 
-# Create Hello message (with type)
+# Create Hello message with certificate and nonce
 def hello_message(cert_path):
     with open(cert_path, "rb") as f:
         cert_pem = f.read()
@@ -98,13 +100,13 @@ def verify_server_certificate(cert: x509.Certificate, ca_cert_path: str):
 
 # Perform ECDH key agreement and derive session keys
 def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
-    # ECDH key pair generation
+
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_bytes = private_key.public_key().public_bytes(
         encoding = serialization.Encoding.X962,
         format = serialization.PublicFormat.UncompressedPoint
     )
-    # Public key send/receive protocol:
+    # Send and receive public keys
     if is_server:
         # Server sends first, then receives
         msg = {"type": "ecdh_pubkey", "key": base64.b64encode(public_bytes).decode()}
@@ -118,9 +120,8 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
         msg = {"type": "ecdh_pubkey", "key": base64.b64encode(public_bytes).decode()}
         sock.sendall(json.dumps(msg).encode())
 
-    # Create peer public key object
+    # Load peer's public key
     peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer_pub_bytes)
-    # Calculate shared secret
     shared_secret = private_key.exchange(ec.ECDH(), peer_public_key)
 
     # Derive session keys and IV
@@ -134,7 +135,7 @@ def ecdh_key_agreement(sock, is_server, local_nonce, remote_nonce):
     iv = hkdf(b"iv", 16)
     return k1, k2, mac1, mac2, iv,shared_secret,info_prefix
 
-# Sign an image using the device_server's private key
+# Sign an image or video file using the device's private key
 def image_sign(image_path, private_key):
     with open(image_path, "rb") as img_file:
         image_data = img_file.read()
@@ -145,8 +146,9 @@ def image_sign(image_path, private_key):
     )
     return image_data, signature
 
+# Check and update keys based on message count
 def check_and_update_keys(shared_secret, info_prefix, message_count, update_counter):
-    if message_count % 2 == 0:  # Update keys every 2 messages
+    if message_count % 2 == 0:  # Update keys in every 2 messages
         update_counter += 1
         def hkdf(info, length):
             return HKDF(
@@ -173,7 +175,7 @@ def check_and_update_keys(shared_secret, info_prefix, message_count, update_coun
     else:
         return None, update_counter
 
-## Main function to run the device_server
+## Main function to run the device operations
 def device_main():
     generate_device_rsa_key_pair()
     create_device_csr()
@@ -185,23 +187,24 @@ def device_main():
         s.connect((host, port))
         print("[Device] Connected to server.")
 
-        # Step 1: Send Hello (certificate + nonce)
+        # Step 1: Send Hello with certificate and nonce
         hello_data, my_nonce = hello_message("device_cert.pem")
         s.sendall(json.dumps(hello_data).encode())
 
-        # Step 2: Receive Hello from server
+        # Step 2: Receive Server Hello and verify certificate
         response = s.recv(4096).decode()
         server_hello = json.loads(response)
         if server_hello.get("type") != "hello":
             raise ValueError("Unexpected message type from server!")
 
+        # Decode server nonce and certificate
         server_nonce = base64.b64decode(server_hello["nonce"])
         print("[Device] Received server certificate and nonce.")
         server_cert = x509.load_pem_x509_certificate(base64.b64decode(server_hello["certificate"]))
         if not verify_server_certificate(server_cert, "../ca/ca_certificate.pem"):
             raise ValueError("Server certificate verification failed!")
 
-        # Step 3: ECDH Key Agreement + Initialize Counters
+        # Step 3: Perform ECDH Key Agreement
         k1, k2, mac1, mac2, iv, shared_secret, info_prefix = ecdh_key_agreement(
             s, is_server=False, local_nonce=my_nonce, remote_nonce=server_nonce
         )
@@ -213,7 +216,7 @@ def device_main():
         print("[Device] MAC keys:", mac1.hex(), mac2.hex())
         print("[Device] IV:", iv.hex())
 
-        # Step 4: Send Encrypted Text Message
+        # Step 4: Send Encrypted Message
         plaintext_msg = "Hello from Device (one-time encrypted)"
         ciphertext = encrypt_and_mac(plaintext_msg, k1, mac1, iv)
         s.sendall(ciphertext)
@@ -226,7 +229,8 @@ def device_main():
             k1, k2, mac1, mac2, iv = updated_keys
             with open("device_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
-        # Step 5: Receive Encrypted ACK
+
+        # Step 5: Receive Encrypted Reply
         cipher_reply = s.recv(4096)
         decrypted_reply = decrypt_and_verify(cipher_reply, k2, mac2, iv)
         print(f"[Device] Received from server: {decrypted_reply} at {timestamp}")
@@ -239,39 +243,39 @@ def device_main():
             with open("device_log.txt", "a") as f:
                 f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
-                # Step 6: Sign and Send Image (or video)
-                image_path = "../img/sample_video.mp4"  # or use a JPEG
+        # Step 6: Send Signed Image Payload
+        image_path = "../img/sample_video.mp4"  # or use a JPEG
 
-                with open("device_private_key.pem", "rb") as f:
-                    private_key = serialization.load_pem_private_key(f.read(), password=None)
+        with open("device_private_key.pem", "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
 
-                image_data, signature = image_sign(image_path, private_key)
+        image_data, signature = image_sign(image_path, private_key)
 
-                payload = {
-                    "type": "image",
-                    "image": base64.b64encode(image_data).decode(),
-                    "signature": base64.b64encode(signature).decode()
-                }
-                print("[Device] Sending signed image payload to server...")
-                payload_bytes = json.dumps(payload).encode()
-                encrypted_payload = encrypt_and_mac(payload_bytes, k1, mac1, iv)
+        payload = {
+            "type": "image",
+            "image": base64.b64encode(image_data).decode(),
+            "signature": base64.b64encode(signature).decode()
+        }
+        print("[Device] Sending signed image payload to server...")
+        payload_bytes = json.dumps(payload).encode()
+        encrypted_payload = encrypt_and_mac(payload_bytes, k1, mac1, iv)
 
-                # Send in two steps: header and data
-                length = len(encrypted_payload)
-                print("[Device] Sending encrypted image payload of length:", length)
-                s.sendall(str(length).zfill(10).encode())
-                s.sendall(encrypted_payload)
-                print("[Device] Encrypted image payload sent to server.")
-                with open("device_log.txt", "a") as f:
-                    f.write(f"[{timestamp}] Encrypted image payload of {length} bytes sent.\n")
-                message_count += 1
-                updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,
-                                                                     update_counter)
-                if updated_keys:
-                    k1, k2, mac1, mac2, iv = updated_keys
-                    with open("device_log.txt", "a") as f:
-                        f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
+        # Send the length of the encrypted payload first
+        length = len(encrypted_payload)
+        print("[Device] Sending encrypted image payload of length:", length)
+        s.sendall(str(length).zfill(10).encode())
+        s.sendall(encrypted_payload)
+        print("[Device] Encrypted image payload sent to server.")
+        with open("device_log.txt", "a") as f:
+            f.write(f"[{timestamp}] Encrypted image payload of {length} bytes sent.\n")
 
+        # Update message count and check for key update
+        message_count += 1
+        updated_keys, update_counter = check_and_update_keys(shared_secret, info_prefix, message_count,update_counter)
+        if updated_keys:
+            k1, k2, mac1, mac2, iv = updated_keys
+            with open("device_log.txt", "a") as f:
+                f.write(f"[{timestamp}] Key update #{update_counter} applied.\n")
 
 if __name__ == "__main__":
     device_main()
